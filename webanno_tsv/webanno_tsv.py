@@ -42,10 +42,13 @@ class Token:
     text: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class Sentence:
     idx: int
     text: str
+    tokens: Sequence[Token]
+    min_char: int
+    max_char: int
 
 
 @dataclass(frozen=True, eq=False)  # Annotations are compared/hashed base on object identity
@@ -327,8 +330,6 @@ def _filter_sentences(lines: List[str]) -> List[str]:
 def _tsv_read_lines(lines: List[str], overriding_layer_names: List[Tuple[str, List[str]]] = None) -> Document:
     non_comments = [line for line in lines if not COMMENT_RE.match(line)]
     token_data = [line for line in non_comments if not SUB_TOKEN_RE.match(line)]
-    sentence_strs = _filter_sentences(lines)
-    sentences = [Sentence(idx=i + 1, text=text) for i, text in enumerate(sentence_strs)]
 
     if overriding_layer_names:
         layer_defs = overriding_layer_names
@@ -348,6 +349,29 @@ def _tsv_read_lines(lines: List[str], overriding_layer_names: List[Tuple[str, Li
         for layer, fields in layer_defs:
             for annotation in _read_layer(token, row, layer, fields):
                 annotations = merge_into_annotations(annotations, annotation)
+
+    # Create Sentence and assign tokens to sentence.
+    sentence_strs = _filter_sentences(lines)
+    sentences: list[Sentence] = []
+    token_ptr = enumerate(tokens)
+    try:
+        _, curr_token = next(token_ptr)
+    except StopIteration:
+        curr_token = None
+    for i, text in enumerate(sentence_strs):
+        sent_tokens = []
+        min_char = float('inf')
+        max_char = float('-inf')
+        while curr_token is not None and curr_token.sentence_idx == i + 1:
+            sent_tokens.append(curr_token)
+            min_char = min(min_char, curr_token.start)
+            max_char = max(max_char, curr_token.end)
+            try:
+                _, curr_token = next(token_ptr)
+            except StopIteration:
+                break
+        sentences.append(Sentence(idx=i + 1, text=text, tokens=sent_tokens, min_char=min_char, max_char=max_char))
+
     return Document(layer_defs=layer_defs, sentences=sentences, tokens=tokens, annotations=annotations)
 
 
